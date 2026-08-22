@@ -6,6 +6,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -27,25 +30,10 @@ jobs:
           path = Path("ForgeAIStudio/app/src/main/java/com/forgeai/studio/ReplicateClient.kt")
           text = path.read_text()
 
-          old = '''        var prediction = initial
-          val started = System.currentTimeMillis()
-          while (true) {
-              when (prediction.optString("status")) {
-                  "succeeded" -> return@withContext outputUrl(prediction)
-                  "failed", "canceled" -> {
-                      val error = prediction.opt("error")?.takeUnless { it == JSONObject.NULL }?.toString()
-                      error(error ?: "Generation ${prediction.optString("status")}")
-                  }
-              }
-              if (System.currentTimeMillis() - started > 12 * 60 * 1000L) error("Generation timed out")
-              val getUrl = prediction.optJSONObject("urls")?.optString("get").orEmpty()
-              if (getUrl.isBlank()) error("Replicate did not return a polling URL")
-              delay(2000)
-              prediction = getPrediction(token, getUrl)
-          }
-'''
+          start = text.index("        var prediction = initial\n        val started = System.currentTimeMillis()")
+          end = text.index("\n    }\n\n    private fun getPrediction", start)
 
-          new = '''        var prediction = initial
+          replacement = '''        var prediction = initial
           val started = System.currentTimeMillis()
           var resultUrl: String? = null
           while (resultUrl == null) {
@@ -63,13 +51,9 @@ jobs:
               delay(2000)
               prediction = getPrediction(token, getUrl)
           }
-          resultUrl ?: error("Generation completed without output")
-'''
+          resultUrl ?: error("Generation completed without output")'''
 
-          if old not in text:
-              raise SystemExit("Could not locate expected Replicate polling block")
-
-          path.write_text(text.replace(old, new, 1))
+          path.write_text(text[:start] + replacement + text[end:])
           print("ReplicateClient.kt patched successfully")
           PY
 
@@ -90,6 +74,18 @@ jobs:
                   }
 
                   buildFeatures {"""
+              )
+
+          if "jvmToolchain(17)" not in text:
+              text = text.replace(
+                  "\ndependencies {",
+                  """
+
+                  kotlin {
+                      jvmToolchain(17)
+                  }
+
+                  dependencies {"""
               )
 
           path.write_text(text)
@@ -114,10 +110,39 @@ jobs:
           gradle-version: "8.9"
 
       - name: Build APK
+        id: build
         working-directory: ForgeAIStudio
-        run: gradle assembleDebug --stacktrace --console=plain
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          gradle assembleDebug --stacktrace --console=plain 2>&1 | tee ../build.log
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Save failed build log to repository
+        if: steps.build.outputs.status != '0'
+        run: |
+          {
+            echo "Forge AI Studio CI failure"
+            echo "Commit: $GITHUB_SHA"
+            echo "Run: $GITHUB_RUN_ID"
+            echo
+            tail -n 500 build.log
+          } > ci-last-failure.log
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ci-last-failure.log
+          git commit -m "Record latest Android build failure" || true
+          git push || true
+
+      - name: Fail job if build failed
+        if: steps.build.outputs.status != '0'
+        run: exit 1
 
       - name: Upload APK
+        if: steps.build.outputs.status == '0'
         uses: actions/upload-artifact@v4
         with:
           name: ForgeAIStudio-debug-apk
