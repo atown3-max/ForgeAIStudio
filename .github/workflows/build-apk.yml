@@ -16,6 +16,11 @@ jobs:
           unzip -o ForgeAIStudio-android-mvp.zip
           ls -la ForgeAIStudio
 
+      - name: Show ReplicateClient error area
+        run: |
+          echo "===== ReplicateClient.kt lines 110-140 ====="
+          nl -ba ForgeAIStudio/app/src/main/java/com/forgeai/studio/ReplicateClient.kt | sed -n '110,140p'
+
       - name: Fix Java 17 compatibility
         run: |
           python3 - <<'PY'
