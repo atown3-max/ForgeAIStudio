@@ -16,10 +16,59 @@ jobs:
           unzip -o ForgeAIStudio-android-mvp.zip
           ls -la ForgeAIStudio
 
-      - name: Show ReplicateClient error area
+      - name: Fix Replicate Kotlin compile error
         run: |
-          echo "===== ReplicateClient.kt lines 110-140 ====="
-          nl -ba ForgeAIStudio/app/src/main/java/com/forgeai/studio/ReplicateClient.kt | sed -n '110,140p'
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("ForgeAIStudio/app/src/main/java/com/forgeai/studio/ReplicateClient.kt")
+          text = path.read_text()
+
+          old = '''        var prediction = initial
+          val started = System.currentTimeMillis()
+          while (true) {
+              when (prediction.optString("status")) {
+                  "succeeded" -> return@withContext outputUrl(prediction)
+                  "failed", "canceled" -> {
+                      val error = prediction.opt("error")?.takeUnless { it == JSONObject.NULL }?.toString()
+                      error(error ?: "Generation ${prediction.optString("status")}")
+                  }
+              }
+              if (System.currentTimeMillis() - started > 12 * 60 * 1000L) error("Generation timed out")
+              val getUrl = prediction.optJSONObject("urls")?.optString("get").orEmpty()
+              if (getUrl.isBlank()) error("Replicate did not return a polling URL")
+              delay(2000)
+              prediction = getPrediction(token, getUrl)
+          }
+'''
+
+          new = '''        var prediction = initial
+          val started = System.currentTimeMillis()
+          var resultUrl: String? = null
+          while (resultUrl == null) {
+              when (prediction.optString("status")) {
+                  "succeeded" -> resultUrl = outputUrl(prediction)
+                  "failed", "canceled" -> {
+                      val error = prediction.opt("error")?.takeUnless { it == JSONObject.NULL }?.toString()
+                      error(error ?: "Generation ${prediction.optString("status")}")
+                  }
+              }
+              if (resultUrl != null) break
+              if (System.currentTimeMillis() - started > 12 * 60 * 1000L) error("Generation timed out")
+              val getUrl = prediction.optJSONObject("urls")?.optString("get").orEmpty()
+              if (getUrl.isBlank()) error("Replicate did not return a polling URL")
+              delay(2000)
+              prediction = getPrediction(token, getUrl)
+          }
+          resultUrl ?: error("Generation completed without output")
+'''
+
+          if old not in text:
+              raise SystemExit("Could not locate expected Replicate polling block")
+
+          path.write_text(text.replace(old, new, 1))
+          print("ReplicateClient.kt patched successfully")
+          PY
 
       - name: Fix Java 17 compatibility
         run: |
@@ -63,7 +112,7 @@ jobs:
 
       - name: Build APK
         working-directory: ForgeAIStudio
-        run: gradle assembleDebug --stacktrace
+        run: gradle assembleDebug --stacktrace --console=plain
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
