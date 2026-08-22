@@ -13,11 +13,34 @@ jobs:
 
       - name: Extract Forge AI Studio
         run: |
-          unzip ForgeAIStudio-android-mvp.zip
+          unzip -o ForgeAIStudio-android-mvp.zip
           ls -la ForgeAIStudio
 
+      - name: Fix Java 17 compatibility
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("ForgeAIStudio/app/build.gradle.kts")
+          text = path.read_text()
+
+          if "compileOptions {" not in text:
+              text = text.replace(
+                  "    buildFeatures {",
+                  """    compileOptions {
+                      sourceCompatibility = JavaVersion.VERSION_17
+                      targetCompatibility = JavaVersion.VERSION_17
+                  }
+
+                  buildFeatures {"""
+              )
+
+          path.write_text(text)
+          print(path.read_text())
+          PY
+
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
