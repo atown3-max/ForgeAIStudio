@@ -1,15 +1,9 @@
 package com.forgeai.studio
 
-import android.content.Intent
 import android.net.Uri
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -21,17 +15,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
-import kotlinx.coroutines.launch
 import java.io.File
-import java.text.DateFormat
-import java.util.Date
 
 @Composable
 fun ResultImage(file: File) {
@@ -65,7 +55,7 @@ fun VideoPlayer(file: File, compact: Boolean = false) {
 fun OptionRow(label: String, options: List<String>, selected: String, onSelect: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(label, fontWeight = FontWeight.SemiBold)
-        androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(options.size) { i ->
                 val option = options[i]
                 FilterChip(selected = option == selected, onClick = { onSelect(option) }, label = { Text(option) })
@@ -79,6 +69,76 @@ fun ToggleRow(label: String, checked: Boolean, enabled: Boolean = true, onChange
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
         Text(label, color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
         Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
+    }
+}
+
+@Composable
+fun PromptAiButtons(
+    busy: Boolean,
+    actions: List<PromptAction> = listOf(PromptAction.OPTIMIZE, PromptAction.IDENTITY, PromptAction.CINEMATIC),
+    onAction: (PromptAction) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Prompt AI", fontWeight = FontWeight.SemiBold)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(actions) { action ->
+                AssistChip(
+                    onClick = { onAction(action) },
+                    enabled = !busy,
+                    label = { Text("✨ ${action.label}") }
+                )
+            }
+        }
+        Text(
+            "Uses RunPod Qwen3 to rewrite your draft for the selected workflow. You can edit the result before generating.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+fun SeedControls(
+    randomSeed: Boolean,
+    seedText: String,
+    lastSeed: Long?,
+    onRandomChange: (Boolean) -> Unit,
+    onSeedTextChange: (String) -> Unit
+) {
+    Card {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Seed", fontWeight = FontWeight.SemiBold)
+            Text(
+                "A seed is the generation's random starting point. Lock or reuse one for controlled variations; references remain the stronger identity anchor.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            ToggleRow("Random seed each run", randomSeed) { onRandomChange(it) }
+            OutlinedTextField(
+                value = seedText,
+                onValueChange = { onSeedTextChange(it.filter(Char::isDigit).take(10)) },
+                label = { Text(if (randomSeed) "Seed generated at run time" else "Locked seed") },
+                enabled = !randomSeed,
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        onRandomChange(false)
+                        onSeedTextChange(SeedTools.randomSeed().toString())
+                    }
+                ) { Text("New locked seed") }
+                if (lastSeed != null) {
+                    TextButton(
+                        onClick = {
+                            onRandomChange(false)
+                            onSeedTextChange(lastSeed.toString())
+                        }
+                    ) { Text("Reuse last: $lastSeed") }
+                }
+            }
+        }
     }
 }
 
