@@ -120,9 +120,13 @@ class RunpodClient(private val tokenProvider: () -> String?) {
         }
         val jobId = initial.optString("id")
         if (jobId.isBlank()) error("RunPod did not return a job ID")
+
         val started = System.currentTimeMillis()
-        while (true) {
-            if (System.currentTimeMillis() - started > timeoutMs) error("RunPod generation timed out. Job: $jobId")
+        var resultUrl: String? = null
+        while (resultUrl == null) {
+            if (System.currentTimeMillis() - started > timeoutMs) {
+                error("RunPod generation timed out. Job: $jobId")
+            }
             delay(2500)
             val request = Request.Builder()
                 .url("https://api.runpod.ai/v2/$endpoint/status/$jobId")
@@ -135,13 +139,14 @@ class RunpodClient(private val tokenProvider: () -> String?) {
                 JSONObject(body)
             }
             when (status.optString("status")) {
-                "COMPLETED" -> return@withContext outputUrl(status, outputKey)
+                "COMPLETED" -> resultUrl = outputUrl(status, outputKey)
                 "FAILED", "ERROR", "CANCELLED", "TIMED_OUT" -> {
                     val detail = status.optString("error").ifBlank { status.optString("status") }
                     error("RunPod $detail\nJob: $jobId")
                 }
             }
         }
+        resultUrl ?: error("RunPod completed without output. Job: $jobId")
     }
 
     private fun outputUrl(result: JSONObject, key: String): String {
