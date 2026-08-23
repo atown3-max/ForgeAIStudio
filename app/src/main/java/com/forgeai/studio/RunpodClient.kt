@@ -182,7 +182,7 @@ class RunpodClient(private val tokenProvider: () -> String?) {
         promptExpansion: Boolean,
         openContent: Boolean
     ): String {
-        require(images in 1..10) { "Kling Character mode needs 1 to 10 reference images." }
+        require(images.size in 1..10) { "Kling Character mode needs 1 to 10 reference images." }
         images.forEach(::validateImageInput)
         require(duration in 3..10) { "Kling Character mode supports 3 to 10 seconds." }
         require(aspectRatio in setOf("16:9", "9:16", "1:1")) { "Unsupported Kling aspect ratio." }
@@ -291,19 +291,23 @@ class RunpodClient(private val tokenProvider: () -> String?) {
     }
 
     private fun extractText(result: JSONObject): String {
-        fun fromValue(value: Any?): List<String> = when (value) {
-            null, JSONObject.NULL -> emptyList()
-            is String -> listOf(value)
-            is JSONArray -> buildList { for (i in 0 until value.length()) addAll(fromValue(value.opt(i))) }
-            is JSONObject -> {
-                val preferred = listOf("tokens", "text", "content", "message", "choices", "output")
-                for (key in preferred) {
-                    val found = fromValue(value.opt(key))
-                    if (found.isNotEmpty()) return found
+        fun fromValue(value: Any?): List<String> {
+            return when (value) {
+                null, JSONObject.NULL -> emptyList()
+                is String -> listOf(value)
+                is JSONArray -> buildList {
+                    for (i in 0 until value.length()) addAll(fromValue(value.opt(i)))
                 }
-                emptyList()
+                is JSONObject -> {
+                    val preferred = listOf("tokens", "text", "content", "message", "choices", "output")
+                    for (key in preferred) {
+                        val found = fromValue(value.opt(key))
+                        if (found.isNotEmpty()) return found
+                    }
+                    emptyList()
+                }
+                else -> emptyList()
             }
-            else -> emptyList()
         }
         return fromValue(result.opt("output")).joinToString("").ifBlank { fromValue(result).joinToString("") }
     }
