@@ -21,4 +21,4 @@ The repository now contains the Android project as normal source files. GitHub A
 
 The generated artifact is named `ForgeAIStudio-debug-apk` and contains `app-debug.apk`.
 
-v0.2 feature-branch builds are validated before merge.
+v0.2 feature-branch builds are validated before merge. PR validation uses the checked-in project rather than the legacy archive.
