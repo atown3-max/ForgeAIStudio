@@ -27,7 +27,7 @@ fun buildForgeVideoPrompt(details: String): String {
 }
 
 enum class VideoProvider(val label: String) {
-    RUNPOD_OPEN("RunPod Open · WAN 2.2"),
+    RUNPOD_OPEN("RunPod Open · WAN 2.5"),
     REPLICATE_LTX("Replicate · LTX 2.3 Fast")
 }
 
@@ -74,7 +74,7 @@ fun VideoStudio(
     }
 
     LaunchedEffect(provider) {
-        if (provider == VideoProvider.RUNPOD_OPEN && duration !in listOf(5, 8, 10, 15)) duration = 5
+        if (provider == VideoProvider.RUNPOD_OPEN && duration !in listOf(5, 10)) duration = 5
         if (provider == VideoProvider.REPLICATE_LTX && duration !in listOf(6, 8, 10, 12, 14, 16, 18, 20)) duration = 6
         if (provider == VideoProvider.RUNPOD_OPEN) lastUri = null
     }
@@ -226,13 +226,12 @@ fun VideoStudio(
                     modifier = Modifier.fillMaxWidth()
                 )
             }
-            item { OptionRow("Duration", listOf("5", "8", "10", "15"), duration.toString()) { duration = it.toInt() } }
-            item { OptionRow("Aspect ratio", listOf("16:9", "9:16"), ratio) { ratio = it } }
+            item { OptionRow("Duration", listOf("5", "10"), duration.toString()) { duration = it.toInt() } }
             item {
                 Card {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("WAN output", fontWeight = FontWeight.SemiBold)
-                        Text("720p · 30 inference steps · guidance 5", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("WAN 2.5 output", fontWeight = FontWeight.SemiBold)
+                        Text("720p · framing follows the source image", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -293,7 +292,7 @@ fun VideoStudio(
 
                             val url = when (provider) {
                                 VideoProvider.RUNPOD_OPEN -> {
-                                    status = "Generating with WAN 2.2…"
+                                    status = "Generating with WAN 2.5…"
                                     runpodClient.generateWan22Video(
                                         prompt = fullPrompt,
                                         image = firstData,
