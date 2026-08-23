@@ -14,7 +14,11 @@ data class CreationRecord(
     val model: String,
     val prompt: String,
     val localPath: String,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val seed: Long? = null,
+    val settings: String = "",
+    val referenceSummary: String = "",
+    val originalPrompt: String = ""
 )
 
 class HistoryStore(context: Context) {
@@ -31,7 +35,11 @@ class HistoryStore(context: Context) {
                     model = o.getString("model"),
                     prompt = o.getString("prompt"),
                     localPath = o.getString("localPath"),
-                    createdAt = o.getLong("createdAt")
+                    createdAt = o.getLong("createdAt"),
+                    seed = if (o.has("seed") && !o.isNull("seed")) o.optLong("seed").takeIf { it > 0L } else null,
+                    settings = o.optString("settings"),
+                    referenceSummary = o.optString("referenceSummary"),
+                    originalPrompt = o.optString("originalPrompt")
                 )
                 if (File(record.localPath).exists()) add(record)
             }
@@ -39,9 +47,12 @@ class HistoryStore(context: Context) {
     }.getOrDefault(emptyList())
 
     fun add(record: CreationRecord) {
-        val records = (listOf(record) + load()).take(100)
+        val records = (listOf(record) + load()).take(150)
         save(records)
     }
+
+    fun latestSeed(kind: CreationKind? = null): Long? =
+        load().firstOrNull { it.seed != null && (kind == null || it.kind == kind) }?.seed
 
     fun delete(record: CreationRecord) {
         runCatching { File(record.localPath).delete() }
@@ -58,6 +69,10 @@ class HistoryStore(context: Context) {
                 put("prompt", r.prompt)
                 put("localPath", r.localPath)
                 put("createdAt", r.createdAt)
+                if (r.seed == null) put("seed", JSONObject.NULL) else put("seed", r.seed)
+                put("settings", r.settings)
+                put("referenceSummary", r.referenceSummary)
+                put("originalPrompt", r.originalPrompt)
             })
         }
         prefs.edit().putString("records", array.toString()).apply()

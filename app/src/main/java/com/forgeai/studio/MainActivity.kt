@@ -13,7 +13,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.io.File
 
-enum class Screen { IMAGE, EDIT, VIDEO, HISTORY, SETTINGS }
+enum class Screen { IMAGE, EDIT, VIDEO, BANK, MORE }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -27,21 +27,26 @@ fun ForgeApp() {
     val context = LocalContext.current
     val tokenStore = remember { SecureTokenStore(context) }
     val historyStore = remember { HistoryStore(context) }
+    val profileStore = remember { ProfileStore(context) }
     val replicateClient = remember { ReplicateClient { tokenStore.load() } }
     val runpodClient = remember { RunpodClient { tokenStore.loadRunPod() } }
 
-    var screen by remember {
-        mutableStateOf(
-            when {
-                !tokenStore.load().isNullOrBlank() -> Screen.IMAGE
-                !tokenStore.loadRunPod().isNullOrBlank() -> Screen.EDIT
-                else -> Screen.SETTINGS
-            }
-        )
+    val initialScreen = when {
+        !tokenStore.load().isNullOrBlank() -> Screen.IMAGE
+        !tokenStore.loadRunPod().isNullOrBlank() -> Screen.EDIT
+        else -> Screen.MORE
     }
+    var screen by remember { mutableStateOf(initialScreen) }
+    var moreTab by remember { mutableStateOf(if (initialScreen == Screen.MORE) "Settings" else "Prompt Lab") }
     var historyVersion by remember { mutableIntStateOf(0) }
+    var profileVersion by remember { mutableIntStateOf(0) }
     var editFile by remember { mutableStateOf<File?>(null) }
     var animateFile by remember { mutableStateOf<File?>(null) }
+
+    fun openSettings() {
+        moreTab = "Settings"
+        screen = Screen.MORE
+    }
 
     MaterialTheme(
         colorScheme = darkColorScheme(
@@ -58,8 +63,8 @@ fun ForgeApp() {
                         Screen.IMAGE to "Image",
                         Screen.EDIT to "Edit",
                         Screen.VIDEO to "Video",
-                        Screen.HISTORY to "History",
-                        Screen.SETTINGS to "Settings"
+                        Screen.BANK to "Bank",
+                        Screen.MORE to "More"
                     ).forEach { (target, label) ->
                         NavigationBarItem(
                             selected = screen == target,
@@ -75,64 +80,59 @@ fun ForgeApp() {
                 when (screen) {
                     Screen.IMAGE -> ImageStudio(
                         client = replicateClient,
+                        runpodClient = runpodClient,
                         historyStore = historyStore,
                         onHistoryChanged = { historyVersion++ },
-                        onEdit = { file ->
-                            editFile = file
-                            screen = Screen.EDIT
-                        },
-                        onAnimate = { file ->
-                            animateFile = file
-                            screen = Screen.VIDEO
-                        },
-                        openSettings = { screen = Screen.SETTINGS }
+                        onEdit = { file -> editFile = file; screen = Screen.EDIT },
+                        onAnimate = { file -> animateFile = file; screen = Screen.VIDEO },
+                        openSettings = ::openSettings
                     )
 
                     Screen.EDIT -> EditStudio(
                         runpodClient = runpodClient,
                         replicateClient = replicateClient,
                         historyStore = historyStore,
+                        profileStore = profileStore,
+                        profileRefreshKey = profileVersion,
                         initialFile = editFile,
                         consumeInitialFile = { editFile = null },
-                        onAnimate = { file ->
-                            animateFile = file
-                            screen = Screen.VIDEO
-                        },
+                        onAnimate = { file -> animateFile = file; screen = Screen.VIDEO },
                         onHistoryChanged = { historyVersion++ },
-                        openSettings = { screen = Screen.SETTINGS }
+                        openSettings = ::openSettings
                     )
 
                     Screen.VIDEO -> VideoStudio(
                         client = replicateClient,
                         runpodClient = runpodClient,
                         historyStore = historyStore,
+                        profileStore = profileStore,
+                        profileRefreshKey = profileVersion,
                         initialFile = animateFile,
                         consumeInitialFile = { animateFile = null },
                         onHistoryChanged = { historyVersion++ },
-                        openSettings = { screen = Screen.SETTINGS }
+                        openSettings = ::openSettings
                     )
 
-                    Screen.HISTORY -> HistoryScreen(
-                        historyStore = historyStore,
-                        refreshKey = historyVersion,
-                        onEdit = { file ->
-                            editFile = file
-                            screen = Screen.EDIT
-                        },
-                        onAnimate = { file ->
-                            animateFile = file
-                            screen = Screen.VIDEO
-                        },
-                        onChanged = { historyVersion++ }
+                    Screen.BANK -> BankScreen(
+                        profileStore = profileStore,
+                        refreshKey = profileVersion,
+                        onChanged = { profileVersion++ }
                     )
 
-                    Screen.SETTINGS -> SettingsScreen(
+                    Screen.MORE -> MoreScreen(
+                        initialTab = moreTab,
                         tokenStore = tokenStore,
                         client = replicateClient,
-                        runpodClient = runpodClient
-                    ) {
-                        screen = if (!tokenStore.load().isNullOrBlank()) Screen.IMAGE else Screen.EDIT
-                    }
+                        runpodClient = runpodClient,
+                        historyStore = historyStore,
+                        historyRefreshKey = historyVersion,
+                        onEdit = { file -> editFile = file; screen = Screen.EDIT },
+                        onAnimate = { file -> animateFile = file; screen = Screen.VIDEO },
+                        onHistoryChanged = { historyVersion++ },
+                        onDoneSettings = {
+                            screen = if (!tokenStore.load().isNullOrBlank()) Screen.IMAGE else Screen.EDIT
+                        }
+                    )
                 }
             }
         }
