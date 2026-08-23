@@ -107,8 +107,10 @@ class RunpodClient(private val tokenProvider: () -> String?) {
             put("enable_safety_checker", !openContent)
         }
 
-        // RunPod's official AI SDK submits video jobs asynchronously and polls status.
-        return runAsync("wan-2-2-i2v-720", input, "video_url", timeoutMs = 20 * 60 * 1000L)
+        // WAN's model-specific RunPod documentation uses /runsync and returns
+        // output.video_url directly. Using the synchronous path avoids a second
+        // billing/status request after the generation has already been charged.
+        return runSync("wan-2-2-i2v-720", input, "video_url", timeoutMs = 20 * 60 * 1000L)
     }
 
     private suspend fun runSync(
