@@ -5,9 +5,10 @@ on:
   push:
     branches:
       - main
-
-permissions:
-  contents: write
+      - feature/runpod-open-mode
+  pull_request:
+    branches:
+      - main
 
 jobs:
   build:
@@ -16,129 +17,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Extract Forge AI Studio
-        run: |
-          unzip -o ForgeAIStudio-android-mvp.zip
-          ls -la ForgeAIStudio
-
-      - name: Fix Replicate Kotlin compile error
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path("ForgeAIStudio/app/src/main/java/com/forgeai/studio/ReplicateClient.kt")
-          text = path.read_text()
-
-          start = text.index("        var prediction = initial\n        val started = System.currentTimeMillis()")
-          end = text.index("\n    }\n\n    private fun getPrediction", start)
-
-          replacement = '''        var prediction = initial
-          val started = System.currentTimeMillis()
-          var resultUrl: String? = null
-          while (resultUrl == null) {
-              when (prediction.optString("status")) {
-                  "succeeded" -> resultUrl = outputUrl(prediction)
-                  "failed", "canceled" -> {
-                      val error = prediction.opt("error")?.takeUnless { it == JSONObject.NULL }?.toString()
-                      val predictionId = prediction.optString("id")
-                      val webUrl = prediction.optJSONObject("urls")?.optString("web").orEmpty()
-                      val logs = prediction.optString("logs").takeLast(1200)
-                      val diagnostic = buildString {
-                          append(error ?: "Generation ${prediction.optString("status")}")
-                          if (predictionId.isNotBlank()) append("\\nPrediction: ").append(predictionId)
-                          if (webUrl.isNotBlank()) append("\\nDebug: ").append(webUrl)
-                          if (logs.isNotBlank()) append("\\nLogs: ").append(logs)
-                      }
-                      error(diagnostic)
-                  }
-              }
-              if (resultUrl != null) break
-              if (System.currentTimeMillis() - started > 12 * 60 * 1000L) error("Generation timed out")
-              val getUrl = prediction.optJSONObject("urls")?.optString("get").orEmpty()
-              if (getUrl.isBlank()) error("Replicate did not return a polling URL")
-              delay(2000)
-              prediction = getPrediction(token, getUrl)
-          }
-          resultUrl ?: error("Generation completed without output")'''
-
-          text = text[:start] + replacement + text[end:]
-          text = text.replace(
-              'class ApiException(val code: Int, override val message: String) : Exception(message)',
-              'class ApiException(val code: Int, detail: String) : Exception("Replicate HTTP $code: $detail")'
-          )
-          path.write_text(text)
-          print("ReplicateClient.kt patched successfully")
-          PY
-
-      - name: Optimize image payloads for Replicate
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path("ForgeAIStudio/app/src/main/java/com/forgeai/studio/MediaUtils.kt")
-          text = path.read_text()
-
-          # Replicate recommends HTTP URLs for larger files and small data URIs.
-          # Forge currently uses inline data URIs, so keep each JPEG small enough
-          # that the base64 request stays comfortably below ~256 KB.
-          text = text.replace("if (maxDim > 2048) {", "if (maxDim > 1280) {")
-          text = text.replace("val scale = 2048f / maxDim.toFloat()", "val scale = 1280f / maxDim.toFloat()")
-
-          start = text.index("    private fun bitmapToDataUri(bitmap: Bitmap): String {")
-          end = text.index("\n    suspend fun downloadToInternal", start)
-          replacement = '''    private fun bitmapToDataUri(bitmap: Bitmap): String {
-        var quality = 88
-        var bytes: ByteArray
-        while (true) {
-            val output = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, quality, output)
-            bytes = output.toByteArray()
-            if (bytes.size <= 180_000 || quality <= 40) break
-            quality = (quality - 6).coerceAtLeast(40)
-        }
-        return "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
-    }
-'''
-          text = text[:start] + replacement + text[end:]
-          path.write_text(text)
-          print("MediaUtils.kt optimized for smaller Replicate data URIs")
-          PY
-
-      - name: Fix Java 17 compatibility
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path("ForgeAIStudio/app/build.gradle.kts")
-          text = path.read_text()
-
-          if "compileOptions {" not in text:
-              text = text.replace(
-                  "    buildFeatures {",
-                  """    compileOptions {
-                      sourceCompatibility = JavaVersion.VERSION_17
-                      targetCompatibility = JavaVersion.VERSION_17
-                  }
-
-                  buildFeatures {"""
-              )
-
-          if "jvmToolchain(17)" not in text:
-              text = text.replace(
-                  "\ndependencies {",
-                  """
-
-                  kotlin {
-                      jvmToolchain(17)
-                  }
-
-                  dependencies {"""
-              )
-
-          path.write_text(text)
-          print(path.read_text())
-          PY
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -158,40 +36,10 @@ jobs:
           gradle-version: "8.9"
 
       - name: Build APK
-        id: build
-        working-directory: ForgeAIStudio
-        shell: bash
-        run: |
-          set +e
-          set -o pipefail
-          gradle assembleDebug --stacktrace --console=plain 2>&1 | tee ../build.log
-          status=${PIPESTATUS[0]}
-          echo "status=$status" >> "$GITHUB_OUTPUT"
-          exit 0
-
-      - name: Save failed build log to repository
-        if: steps.build.outputs.status != '0'
-        run: |
-          {
-            echo "Forge AI Studio CI failure"
-            echo "Commit: $GITHUB_SHA"
-            echo "Run: $GITHUB_RUN_ID"
-            echo
-            tail -n 500 build.log
-          } > ci-last-failure.log
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ci-last-failure.log
-          git commit -m "Record latest Android build failure" || true
-          git push || true
-
-      - name: Fail job if build failed
-        if: steps.build.outputs.status != '0'
-        run: exit 1
+        run: gradle assembleDebug --stacktrace --console=plain
 
       - name: Upload APK
-        if: steps.build.outputs.status == '0'
         uses: actions/upload-artifact@v4
         with:
           name: ForgeAIStudio-debug-apk
-          path: ForgeAIStudio/app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/app-debug.apk
