@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
@@ -60,6 +61,26 @@ object MediaUtils {
             quality = (quality - 6).coerceAtLeast(40)
         }
         return "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
+    }
+
+    suspend fun extractLastFrame(context: Context, videoFile: File): File = withContext(Dispatchers.IO) {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(videoFile.absolutePath)
+            val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            val targetUs = ((durationMs - 120L).coerceAtLeast(0L)) * 1000L
+            val frame = retriever.getFrameAtTime(targetUs, MediaMetadataRetriever.OPTION_CLOSEST)
+                ?: error("Could not extract the final video frame")
+            val dir = File(context.filesDir, "continuation_frames").apply { mkdirs() }
+            val file = File(dir, "continue_${System.currentTimeMillis()}_${UUID.randomUUID()}.jpg")
+            FileOutputStream(file).use { output ->
+                if (!frame.compress(Bitmap.CompressFormat.JPEG, 92, output)) error("Could not save continuation frame")
+            }
+            frame.recycle()
+            file
+        } finally {
+            runCatching { retriever.release() }
+        }
     }
 
     suspend fun downloadToInternal(context: Context, url: String, kind: CreationKind): File = withContext(Dispatchers.IO) {
