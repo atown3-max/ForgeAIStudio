@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import java.io.File
 
 enum class Screen { IMAGE, EDIT, VIDEO, BANK, MORE }
@@ -30,9 +31,13 @@ fun ForgeApp() {
     val replicateClient = remember { ReplicateClient { tokenStore.load() } }
     val runpodClient = remember { RunpodClient { tokenStore.loadRunPod() } }
 
-    val hasAnyKey = !tokenStore.load().isNullOrBlank() || !tokenStore.loadRunPod().isNullOrBlank()
-    var screen by remember { mutableStateOf(if (hasAnyKey) Screen.IMAGE else Screen.MORE) }
-    var moreTab by remember { mutableStateOf(if (hasAnyKey) "Prompt Lab" else "Settings") }
+    val initialScreen = when {
+        !tokenStore.load().isNullOrBlank() -> Screen.IMAGE
+        !tokenStore.loadRunPod().isNullOrBlank() -> Screen.EDIT
+        else -> Screen.MORE
+    }
+    var screen by remember { mutableStateOf(initialScreen) }
+    var moreTab by remember { mutableStateOf(if (initialScreen == Screen.MORE) "Settings" else "Prompt Lab") }
     var historyVersion by remember { mutableIntStateOf(0) }
     var profileVersion by remember { mutableIntStateOf(0) }
     var editFile by remember { mutableStateOf<File?>(null) }
@@ -136,7 +141,7 @@ fun ForgeApp() {
 
 @Composable
 fun StudioHeader(title: String, subtitle: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(androidx.compose.ui.unit.dp(4f))) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
