@@ -75,6 +75,11 @@ class RunpodClient(private val tokenProvider: () -> String?) {
         return runSync("qwen-image-edit", input, "image_url", timeoutMs = 8 * 60 * 1000L)
     }
 
+    /**
+     * Compatibility name retained so the current VideoStudio can call this without a UI rewrite.
+     * The implementation now uses WAN 2.5 because WAN 2.2's long-duration worker can generate
+     * mismatched intermediate frame sizes and fail its internal ffmpeg xfade step.
+     */
     suspend fun generateWan22Video(
         prompt: String,
         image: String?,
@@ -84,7 +89,10 @@ class RunpodClient(private val tokenProvider: () -> String?) {
         seed: Long?,
         openContent: Boolean
     ): String {
-        require(duration in listOf(5, 8, 10, 15)) { "WAN supports 5, 8, 10, or 15 seconds." }
+        require(duration in listOf(5, 10)) {
+            "RunPod Open video currently supports 5 or 10 seconds. WAN 2.2 longer-duration stitching is disabled because of an upstream xfade bug."
+        }
+
         val imageInput = image?.trim().orEmpty()
         require(imageInput.isNotBlank()) { "Choose a first frame for image-to-video." }
         require(
@@ -100,17 +108,11 @@ class RunpodClient(private val tokenProvider: () -> String?) {
             put("size", if (aspectRatio == "9:16") "720*1280" else "1280*720")
             put("duration", duration)
             put("seed", seed ?: -1L)
-            put("num_inference_steps", 30)
-            put("guidance", 5)
-            put("flow_shift", 5)
-            put("enable_prompt_optimization", false)
+            put("enable_prompt_expansion", false)
             put("enable_safety_checker", !openContent)
         }
 
-        // WAN's model-specific RunPod documentation uses /runsync and returns
-        // output.video_url directly. Using the synchronous path avoids a second
-        // billing/status request after the generation has already been charged.
-        return runSync("wan-2-2-i2v-720", input, "video_url", timeoutMs = 20 * 60 * 1000L)
+        return runSync("wan-2-5", input, "video_url", timeoutMs = 20 * 60 * 1000L)
     }
 
     private suspend fun runSync(
@@ -150,34 +152,6 @@ class RunpodClient(private val tokenProvider: () -> String?) {
                 }
             }
         }
-    }
-
-    private suspend fun runAsync(
-        endpoint: String,
-        input: JSONObject,
-        outputKey: String,
-        timeoutMs: Long
-    ): String = withContext(Dispatchers.IO) {
-        val token = requireToken()
-        val payload = JSONObject().put("input", input).toString()
-        val submit = Request.Builder()
-            .url("https://api.runpod.ai/v2/$endpoint/run")
-            .header("Authorization", "Bearer $token")
-            .header("Content-Type", "application/json")
-            .post(payload.toRequestBody("application/json".toMediaType()))
-            .build()
-
-        val initial = client.newCall(submit).execute().use { response ->
-            val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) throw RunpodApiException(response.code, errorText(body))
-            JSONObject(body)
-        }
-
-        val jobId = initial.optString("id")
-        if (jobId.isBlank()) {
-            return@withContext outputUrl(initial, outputKey)
-        }
-        pollForResult(token, endpoint, jobId, outputKey, timeoutMs)
     }
 
     private suspend fun pollForResult(
