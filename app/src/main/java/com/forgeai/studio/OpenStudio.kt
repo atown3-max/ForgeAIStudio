@@ -37,6 +37,7 @@ fun OpenStudio(
     var adultAcknowledged by remember { mutableStateOf(false) }
     var sourceUri by remember { mutableStateOf<Uri?>(null) }
     var sourceRemoteUrl by remember { mutableStateOf<String?>(null) }
+    var hostedImageUrl by remember { mutableStateOf("") }
     var sourcePreview by remember { mutableStateOf<File?>(null) }
     var duration by remember { mutableIntStateOf(5) }
     var busy by remember { mutableStateOf(false) }
@@ -50,6 +51,7 @@ fun OpenStudio(
             sourceUri = uri
             sourceRemoteUrl = null
             sourcePreview = null
+            status = "Photo selected. RunPod Public WAN requires a hosted HTTPS image URL, so a phone-gallery photo cannot be sent directly yet. Use an Open-generated image or paste a hosted URL below."
         }
     }
 
@@ -117,6 +119,7 @@ fun OpenStudio(
                             sourcePreview = file
                             sourceUri = null
                             sourceRemoteUrl = imageRemoteUrl
+                            hostedImageUrl = imageRemoteUrl.orEmpty()
                             mode = OpenMode.VIDEO
                             status = "Qwen image loaded as the WAN first frame."
                         }, modifier = Modifier.weight(1f)) { Text("Animate with WAN") }
@@ -135,11 +138,27 @@ fun OpenStudio(
                         preview?.let { AsyncImage(it, null, Modifier.fillMaxWidth().height(190.dp).clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.Crop) }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { picker.launch("image/*") }, enabled = !busy) { Text("Choose image") }
-                            if (preview != null) TextButton(onClick = { sourceUri = null; sourcePreview = null; sourceRemoteUrl = null }) { Text("Clear") }
+                            if (preview != null || sourceRemoteUrl != null || hostedImageUrl.isNotBlank()) {
+                                TextButton(onClick = { sourceUri = null; sourcePreview = null; sourceRemoteUrl = null; hostedImageUrl = "" }) { Text("Clear") }
+                            }
                         }
-                        Text("WAN Open accepts a first frame. Generated Forge images use their temporary provider URL; gallery images are sent as a compact data URI and may depend on endpoint support.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "RunPod's public WAN endpoint requires an HTTP/HTTPS image URL. Open-generated Qwen images already have one. Direct phone-gallery upload will be added with Forge's custom RunPod worker.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
+            }
+            item {
+                OutlinedTextField(
+                    value = hostedImageUrl,
+                    onValueChange = { hostedImageUrl = it; if (it.startsWith("http")) sourceRemoteUrl = it.trim() },
+                    label = { Text("Hosted first-frame URL (optional)") },
+                    placeholder = { Text("https://…") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
             }
             item { OutlinedTextField(prompt, { prompt = it }, label = { Text("Describe the video motion") }, minLines = 4, modifier = Modifier.fillMaxWidth()) }
             item { OutlinedTextField(negative, { negative = it }, label = { Text("Negative prompt (optional)") }, modifier = Modifier.fillMaxWidth()) }
@@ -154,8 +173,13 @@ fun OpenStudio(
                         scope.launch {
                             busy = true; videoResult = null; status = "Preparing WAN input…"
                             runCatching {
-                                val imageInput = sourceRemoteUrl ?: sourceUri?.let { MediaUtils.uriToJpegDataUri(context, it) }
-                                    ?: error("Choose a first frame for WAN Open image-to-video.")
+                                val imageInput = sourceRemoteUrl?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+                                    ?: hostedImageUrl.trim().takeIf { it.startsWith("http://") || it.startsWith("https://") }
+                                    ?: if (sourceUri != null) {
+                                        error("RunPod Public WAN cannot read a photo directly from your phone. Use Animate with WAN from an Open-generated image, or paste a hosted HTTPS image URL. Direct gallery upload needs Forge's custom RunPod worker.")
+                                    } else {
+                                        error("Choose an Open-generated image or provide a hosted first-frame URL.")
+                                    }
                                 status = "Generating WAN image-to-video…"
                                 val url = client.generateWan22Video(prompt, imageInput, negative, duration, if (ratio == "9:16") "9:16" else "16:9", seedText.toLongOrNull(), openContent)
                                 status = "Saving video locally…"
