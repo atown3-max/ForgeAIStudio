@@ -65,6 +65,7 @@ fun VideoStudio(
     var negative by remember { mutableStateOf("") }
     var duration by remember { mutableIntStateOf(5) }
     var wanResolution by remember { mutableStateOf("720p") }
+    var ltxResolution by remember { mutableStateOf("1080p") }
     var shotType by remember { mutableStateOf("single") }
     var ratio by remember { mutableStateOf("16:9") }
     var fps by remember { mutableIntStateOf(25) }
@@ -112,7 +113,7 @@ fun VideoStudio(
         if (uris.isNotEmpty()) extraReferenceUris = uris.take(9)
     }
 
-    val invalidLongSetting = provider == VideoProvider.REPLICATE_LTX && duration > 10 && (wanResolution != "1080p" || fps !in listOf(24, 25))
+    val invalidLongSetting = provider == VideoProvider.REPLICATE_LTX && duration > 10 && (ltxResolution != "1080p" || fps !in listOf(24, 25))
     val isRunPod = provider != VideoProvider.REPLICATE_LTX
     val referenceContext = buildString {
         selectedCharacter?.let { append("Character ${it.name}; locked traits: ${it.lockedTraits.joinToString()}. ") }
@@ -131,7 +132,6 @@ fun VideoStudio(
                 "Use WAN for animation, Kling O1 for multi-view character continuity, or LTX for its extended controls."
             )
         }
-
         item { OptionRow("Provider", VideoProvider.entries.map { it.label }, provider.label) { selected -> provider = VideoProvider.entries.first { it.label == selected } } }
 
         if (isRunPod) {
@@ -144,11 +144,7 @@ fun VideoStudio(
                                 Text("I understand the adults-only boundary", Modifier.weight(1f))
                                 Checkbox(checked = adultAcknowledged, onCheckedChange = { adultAcknowledged = it })
                             }
-                            Text(
-                                "No sexual content involving minors and no non-consensual intimate imagery.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Text("No sexual content involving minors and no non-consensual intimate imagery.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -162,9 +158,7 @@ fun VideoStudio(
                     val source: Any? = firstFile ?: firstUri
                     if (source != null) {
                         AsyncImage(model = source, contentDescription = null, modifier = Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.Crop)
-                    } else {
-                        Text("Choose the image you want to animate.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    } else Text("Choose the image you want to animate.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { firstPicker.launch("image/*") }, enabled = !busy) { Text(if (source == null) "Choose image" else "Change image") }
                         if (source != null) TextButton(onClick = { firstFile = null; firstUri = null; result = null }) { Text("Clear") }
@@ -182,9 +176,7 @@ fun VideoStudio(
                         OutlinedButton(onClick = { multiPicker.launch("image/*") }, enabled = !busy) { Text("Choose extra references (${extraReferenceUris.size}/9)") }
                         if (extraReferenceUris.isNotEmpty()) {
                             Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                                extraReferenceUris.take(4).forEach { uri ->
-                                    AsyncImage(model = uri, contentDescription = null, modifier = Modifier.size(72.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
-                                }
+                                extraReferenceUris.take(4).forEach { uri -> AsyncImage(model = uri, contentDescription = null, modifier = Modifier.size(72.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop) }
                             }
                             TextButton(onClick = { extraReferenceUris = emptyList() }) { Text("Clear extra references") }
                         }
@@ -259,7 +251,6 @@ fun VideoStudio(
                 }
             }
         }
-
         item {
             OutlinedTextField(
                 value = promptDetails,
@@ -270,12 +261,8 @@ fun VideoStudio(
                 modifier = Modifier.fillMaxWidth()
             )
         }
-
         item {
-            PromptAiButtons(
-                busy = promptBusy,
-                actions = listOf(PromptAction.OPTIMIZE, PromptAction.CINEMATIC, PromptAction.IDENTITY, PromptAction.SIMPLIFY)
-            ) { action ->
+            PromptAiButtons(busy = promptBusy, actions = listOf(PromptAction.OPTIMIZE, PromptAction.CINEMATIC, PromptAction.IDENTITY, PromptAction.SIMPLIFY)) { action ->
                 if (promptDetails.isBlank()) { status = "Enter rough motion details first."; return@PromptAiButtons }
                 scope.launch {
                     promptBusy = true
@@ -288,7 +275,6 @@ fun VideoStudio(
                 }
             }
         }
-
         item { ToggleRow("Strong identity continuity instructions", preserveIdentity) { preserveIdentity = it } }
         item { OutlinedTextField(value = negative, onValueChange = { negative = it }, label = { Text("Negative prompt / avoid (optional)") }, modifier = Modifier.fillMaxWidth()) }
 
@@ -310,7 +296,7 @@ fun VideoStudio(
             }
             VideoProvider.REPLICATE_LTX -> {
                 item { OptionRow("Duration", listOf("6", "8", "10", "12", "14", "16", "18", "20"), duration.toString()) { duration = it.toInt() } }
-                item { OptionRow("Resolution", listOf("1080p", "2k", "4k"), wanResolution) { wanResolution = it } }
+                item { OptionRow("Resolution", listOf("1080p", "2k", "4k"), ltxResolution) { ltxResolution = it } }
                 item { OptionRow("Aspect ratio", listOf("16:9", "9:16"), ratio) { ratio = it } }
                 item { OptionRow("FPS", listOf("24", "25", "48", "50"), fps.toString()) { fps = it.toInt() } }
                 item { OptionRow("Camera", listOf("none", "static", "dolly_in", "dolly_out", "dolly_left", "dolly_right", "jib_up", "jib_down", "focus_shift"), motion) { motion = it } }
@@ -320,13 +306,7 @@ fun VideoStudio(
         }
 
         item {
-            SeedControls(
-                randomSeed = randomSeed,
-                seedText = seedText,
-                lastSeed = historyStore.latestSeed(CreationKind.VIDEO),
-                onRandomChange = { randomSeed = it },
-                onSeedTextChange = { seedText = it }
-            )
+            SeedControls(randomSeed, seedText, historyStore.latestSeed(CreationKind.VIDEO), { randomSeed = it }, { seedText = it })
         }
 
         item {
@@ -365,19 +345,15 @@ fun VideoStudio(
                                         if (refs.size >= 10) break
                                         refs += MediaUtils.uriToJpegDataUri(context, uri)
                                     }
-                                    selectedCharacter?.usableReferences(includeAnatomy && anatomyAcknowledged, limit = 10)?.forEach { ref ->
-                                        if (refs.size < 10) refs += MediaUtils.fileToJpegDataUri(File(ref.path))
-                                    }
-                                    selectedBackground?.references?.forEach { ref ->
-                                        if (refs.size < 10) refs += MediaUtils.fileToJpegDataUri(File(ref.path))
-                                    }
+                                    selectedCharacter?.usableReferences(includeAnatomy && anatomyAcknowledged, limit = 10)?.forEach { ref -> if (refs.size < 10) refs += MediaUtils.fileToJpegDataUri(File(ref.path)) }
+                                    selectedBackground?.references?.forEach { ref -> if (refs.size < 10) refs += MediaUtils.fileToJpegDataUri(File(ref.path)) }
                                     status = "Generating with Kling O1 using ${refs.size} reference image${if (refs.size == 1) "" else "s"}…"
                                     runpodClient.generateKlingReferenceVideo(fullPrompt, refs.take(10), negative, ratio, duration, seed, promptExpansion, openContent)
                                 }
                                 VideoProvider.REPLICATE_LTX -> {
                                     val lastData = lastUri?.let { MediaUtils.uriToJpegDataUri(context, it) }
                                     status = "Generating with LTX 2.3…"
-                                    client.generateLtx23(fullPrompt, firstData, lastData, duration, wanResolution, ratio, fps, motion, audio)
+                                    client.generateLtx23(fullPrompt, firstData, lastData, duration, ltxResolution, ratio, fps, motion, audio)
                                 }
                             }
 
@@ -387,7 +363,7 @@ fun VideoStudio(
                                 VideoProvider.WAN25_FAST -> "duration=${duration}s; resolution=720p"
                                 VideoProvider.WAN26_ADVANCED -> "duration=${duration}s; resolution=$wanResolution; shot=$shotType"
                                 VideoProvider.KLING_CHARACTER -> "duration=${duration}s; ratio=$ratio; characterRefs=${selectedCharacter?.references?.size ?: 0}"
-                                VideoProvider.REPLICATE_LTX -> "duration=${duration}s; resolution=$wanResolution; ratio=$ratio; fps=$fps; camera=$motion; audio=$audio"
+                                VideoProvider.REPLICATE_LTX -> "duration=${duration}s; resolution=$ltxResolution; ratio=$ratio; fps=$fps; camera=$motion; audio=$audio"
                             }
                             historyStore.add(
                                 CreationRecord(
@@ -414,7 +390,6 @@ fun VideoStudio(
         }
 
         status?.let { item { StatusCard(it, busy || promptBusy, openSettings) } }
-
         result?.let { file ->
             item { VideoPlayer(file) }
             item {
@@ -434,9 +409,7 @@ fun VideoStudio(
                         onClick = {
                             val uri = MediaUtils.shareUri(context, file)
                             context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                                type = "video/mp4"
-                                putExtra(Intent.EXTRA_STREAM, uri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                type = "video/mp4"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             }, "Share video"))
                         },
                         modifier = Modifier.weight(1f)
@@ -444,16 +417,13 @@ fun VideoStudio(
                 }
             }
             item {
-                OutlinedButton(
-                    onClick = {
-                        scope.launch {
-                            runCatching { MediaUtils.saveToGallery(context, file, CreationKind.VIDEO) }
-                                .onSuccess { status = "Saved to Movies/Forge AI Studio" }
-                                .onFailure { status = it.message }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Save video") }
+                OutlinedButton(onClick = {
+                    scope.launch {
+                        runCatching { MediaUtils.saveToGallery(context, file, CreationKind.VIDEO) }
+                            .onSuccess { status = "Saved to Movies/Forge AI Studio" }
+                            .onFailure { status = it.message }
+                    }
+                }, modifier = Modifier.fillMaxWidth()) { Text("Save video") }
             }
         }
     }
