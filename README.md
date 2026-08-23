@@ -20,3 +20,5 @@ RunPod requires its own account, API key, and credits. The existing Replicate wo
 The repository now contains the Android project as normal source files. GitHub Actions builds the debug APK directly from the repository root using Java 17, Android SDK 35, and Gradle 8.9.
 
 The generated artifact is named `ForgeAIStudio-debug-apk` and contains `app-debug.apk`.
+
+v0.2 feature-branch builds are validated before merge.
