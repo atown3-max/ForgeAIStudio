@@ -7,6 +7,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
@@ -20,8 +21,8 @@ import java.util.concurrent.TimeUnit
 class RunpodClient(private val tokenProvider: () -> String?) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(90, TimeUnit.SECONDS)
-        .writeTimeout(90, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.MINUTES)
+        .writeTimeout(2, TimeUnit.MINUTES)
         .build()
 
     suspend fun testToken(): String = withContext(Dispatchers.IO) {
@@ -65,8 +66,11 @@ class RunpodClient(private val tokenProvider: () -> String?) {
         openContent: Boolean
     ): String {
         require(duration in listOf(5, 8, 10, 15)) { "WAN Open supports 5, 8, 10, or 15 seconds." }
-        require(!image.isNullOrBlank()) { "WAN Open image-to-video needs a first frame." }
-        val endpoint = "wan-2-2-i2v-720"
+        val imageUrl = image?.trim().orEmpty()
+        require(imageUrl.startsWith("https://") || imageUrl.startsWith("http://")) {
+            "RunPod Public WAN requires the first frame as a hosted HTTP/HTTPS image URL. " +
+                "Use Animate with WAN from an Open-generated image, or provide a hosted image URL."
+        }
         val input = JSONObject().apply {
             put("prompt", prompt)
             put("negative_prompt", negativePrompt)
@@ -74,13 +78,14 @@ class RunpodClient(private val tokenProvider: () -> String?) {
             put("duration", duration)
             put("seed", seed ?: -1L)
             put("enable_safety_checker", !openContent)
-            put("image", image)
+            put("image", imageUrl)
             put("num_inference_steps", 30)
             put("guidance", 5)
             put("flow_shift", 5)
             put("enable_prompt_optimization", false)
         }
-        return runAsync(endpoint, input, "video_url", timeoutMs = 18 * 60 * 1000L)
+        // RunPod's public WAN 2.2 documentation uses /runsync and returns output.video_url.
+        return runSync("wan-2-2-i2v-720", input, "video_url")
     }
 
     private suspend fun runSync(endpoint: String, input: JSONObject, outputKey: String): String = withContext(Dispatchers.IO) {
@@ -149,13 +154,64 @@ class RunpodClient(private val tokenProvider: () -> String?) {
         resultUrl ?: error("RunPod completed without output. Job: $jobId")
     }
 
-    private fun outputUrl(result: JSONObject, key: String): String {
-        val output = result.optJSONObject("output")
-        val url = output?.optString(key).orEmpty()
-        if (url.isNotBlank()) return url
+    private fun outputUrl(result: JSONObject, preferredKey: String): String {
+        val output = result.opt("output")
+        val candidates = listOf(preferredKey, "result", "url", "video_url", "image_url")
+
+        fun fromJsonObject(obj: JSONObject): String? {
+            for (key in candidates) {
+                val value = obj.opt(key)
+                if (value is String && (value.startsWith("https://") || value.startsWith("http://"))) return value
+                if (value is JSONObject) {
+                    val nested = fromJsonObject(value)
+                    if (nested != null) return nested
+                }
+                if (value is JSONArray) {
+                    for (i in 0 until value.length()) {
+                        val item = value.opt(i)
+                        if (item is String && (item.startsWith("https://") || item.startsWith("http://"))) return item
+                        if (item is JSONObject) {
+                            val nested = fromJsonObject(item)
+                            if (nested != null) return nested
+                        }
+                    }
+                }
+            }
+            return null
+        }
+
+        val url = when (output) {
+            is JSONObject -> fromJsonObject(output)
+            is JSONArray -> {
+                var found: String? = null
+                for (i in 0 until output.length()) {
+                    val item = output.opt(i)
+                    if (item is String && (item.startsWith("https://") || item.startsWith("http://"))) {
+                        found = item
+                        break
+                    }
+                    if (item is JSONObject) {
+                        found = fromJsonObject(item)
+                        if (found != null) break
+                    }
+                }
+                found
+            }
+            is String -> output.takeIf { it.startsWith("https://") || it.startsWith("http://") }
+            else -> null
+        }
+        if (!url.isNullOrBlank()) return url
+
         val status = result.optString("status")
         val error = result.optString("error")
-        error(if (error.isNotBlank()) "RunPod $status: $error" else "RunPod returned no $key")
+        val jobId = result.optString("id")
+        val rawOutput = output?.toString()?.take(1500).orEmpty()
+        val detail = buildString {
+            append(if (error.isNotBlank()) "RunPod $status: $error" else "RunPod returned no $preferredKey")
+            if (jobId.isNotBlank()) append("\nJob: ").append(jobId)
+            if (rawOutput.isNotBlank()) append("\nOutput: ").append(rawOutput)
+        }
+        error(detail)
     }
 
     private fun imageSize(aspectRatio: String): String = when (aspectRatio) {
