@@ -76,9 +76,10 @@ class RunpodClient(private val tokenProvider: () -> String?) {
     }
 
     /**
-     * Compatibility name retained so the current VideoStudio can call this without a UI rewrite.
-     * The implementation now uses WAN 2.5 because WAN 2.2's long-duration worker can generate
-     * mismatched intermediate frame sizes and fail its internal ffmpeg xfade step.
+     * RunPod Open image-to-video using WAN 2.5.
+     * WAN 2.5 I2V accepts a resolution enum (480p/720p/1080p), not pixel dimensions.
+     * Image-to-video framing follows the source image, so aspectRatio is retained only for
+     * compatibility with the current UI and is intentionally not sent to the endpoint.
      */
     suspend fun generateWan22Video(
         prompt: String,
@@ -90,7 +91,7 @@ class RunpodClient(private val tokenProvider: () -> String?) {
         openContent: Boolean
     ): String {
         require(duration in listOf(5, 10)) {
-            "RunPod Open video currently supports 5 or 10 seconds. WAN 2.2 longer-duration stitching is disabled because of an upstream xfade bug."
+            "RunPod WAN 2.5 supports 5 or 10 seconds."
         }
 
         val imageInput = image?.trim().orEmpty()
@@ -101,11 +102,16 @@ class RunpodClient(private val tokenProvider: () -> String?) {
                 imageInput.startsWith("http://")
         ) { "WAN needs an image URL or image data URI." }
 
+        // Referencing the argument keeps the compatibility signature explicit while the
+        // WAN 2.5 I2V endpoint derives framing from the source image rather than this value.
+        @Suppress("UNUSED_VARIABLE")
+        val requestedAspectRatio = aspectRatio
+
         val input = JSONObject().apply {
             put("prompt", prompt)
             put("image", imageInput)
             put("negative_prompt", negativePrompt)
-            put("size", if (aspectRatio == "9:16") "720*1280" else "1280*720")
+            put("resolution", "720p")
             put("duration", duration)
             put("seed", seed ?: -1L)
             put("enable_prompt_expansion", false)
