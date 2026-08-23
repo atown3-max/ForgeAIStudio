@@ -12,11 +12,11 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /**
- * RunPod Public Endpoints provider used by Forge's optional Open mode.
+ * RunPod Public Endpoints client used by Forge's Edit and Video workflows.
  *
- * Open mode only changes the model/provider's optional safety-checker flag. Forge still keeps
- * an adults-only boundary for sexual content and does not support sexual content involving minors
- * or non-consensual intimate imagery.
+ * Forge can switch RunPod's optional model safety checker off for lawful adult generation.
+ * Forge still keeps hard boundaries against sexual content involving minors and
+ * non-consensual intimate imagery.
  */
 class RunpodClient(private val tokenProvider: () -> String?) {
     private val client = OkHttpClient.Builder()
@@ -53,7 +53,26 @@ class RunpodClient(private val tokenProvider: () -> String?) {
             put("seed", seed ?: -1L)
             put("enable_safety_checker", !openContent)
         }
-        return runSync("qwen-image-t2i", input, "image_url")
+        return runSync("qwen-image-t2i", input, "image_url", timeoutMs = 6 * 60 * 1000L)
+    }
+
+    suspend fun generateQwenEdit(
+        prompt: String,
+        imageDataUriOrUrl: String,
+        negativePrompt: String,
+        seed: Long?,
+        openContent: Boolean
+    ): String {
+        require(imageDataUriOrUrl.isNotBlank()) { "Choose an image to edit first." }
+        val input = JSONObject().apply {
+            put("prompt", prompt)
+            put("image", imageDataUriOrUrl)
+            put("negative_prompt", negativePrompt)
+            put("seed", seed ?: -1L)
+            put("output_format", "png")
+            put("enable_safety_checker", !openContent)
+        }
+        return runSync("qwen-image-edit", input, "image_url", timeoutMs = 8 * 60 * 1000L)
     }
 
     suspend fun generateWan22Video(
@@ -65,30 +84,39 @@ class RunpodClient(private val tokenProvider: () -> String?) {
         seed: Long?,
         openContent: Boolean
     ): String {
-        require(duration in listOf(5, 8, 10, 15)) { "WAN Open supports 5, 8, 10, or 15 seconds." }
-        val imageUrl = image?.trim().orEmpty()
-        require(imageUrl.startsWith("https://") || imageUrl.startsWith("http://")) {
-            "RunPod Public WAN requires the first frame as a hosted HTTP/HTTPS image URL. " +
-                "Use Animate with WAN from an Open-generated image, or provide a hosted image URL."
-        }
+        require(duration in listOf(5, 8, 10, 15)) { "WAN supports 5, 8, 10, or 15 seconds." }
+        val imageInput = image?.trim().orEmpty()
+        require(imageInput.isNotBlank()) { "Choose a first frame for image-to-video." }
+        require(
+            imageInput.startsWith("data:image/") ||
+                imageInput.startsWith("https://") ||
+                imageInput.startsWith("http://")
+        ) { "WAN needs an image URL or image data URI." }
+
         val input = JSONObject().apply {
             put("prompt", prompt)
+            put("image", imageInput)
             put("negative_prompt", negativePrompt)
             put("size", if (aspectRatio == "9:16") "720*1280" else "1280*720")
             put("duration", duration)
             put("seed", seed ?: -1L)
-            put("enable_safety_checker", !openContent)
-            put("image", imageUrl)
             put("num_inference_steps", 30)
             put("guidance", 5)
             put("flow_shift", 5)
             put("enable_prompt_optimization", false)
+            put("enable_safety_checker", !openContent)
         }
-        // RunPod's public WAN 2.2 documentation uses /runsync and returns output.video_url.
-        return runSync("wan-2-2-i2v-720", input, "video_url")
+
+        // RunPod's official AI SDK submits video jobs asynchronously and polls status.
+        return runAsync("wan-2-2-i2v-720", input, "video_url", timeoutMs = 20 * 60 * 1000L)
     }
 
-    private suspend fun runSync(endpoint: String, input: JSONObject, outputKey: String): String = withContext(Dispatchers.IO) {
+    private suspend fun runSync(
+        endpoint: String,
+        input: JSONObject,
+        outputKey: String,
+        timeoutMs: Long
+    ): String = withContext(Dispatchers.IO) {
         val token = requireToken()
         val payload = JSONObject().put("input", input).toString()
         val request = Request.Builder()
@@ -97,10 +125,28 @@ class RunpodClient(private val tokenProvider: () -> String?) {
             .header("Content-Type", "application/json")
             .post(payload.toRequestBody("application/json".toMediaType()))
             .build()
-        client.newCall(request).execute().use { response ->
+
+        val initial = client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) throw RunpodApiException(response.code, errorText(body))
-            outputUrl(JSONObject(body), outputKey)
+            JSONObject(body)
+        }
+
+        when (initial.optString("status").uppercase()) {
+            "COMPLETED" -> outputUrl(initial, outputKey)
+            "FAILED", "ERROR", "CANCELLED", "TIMED_OUT" -> error(statusError(initial))
+            "IN_QUEUE", "IN_PROGRESS" -> {
+                val jobId = initial.optString("id")
+                if (jobId.isBlank()) error("RunPod did not return a job ID")
+                pollForResult(token, endpoint, jobId, outputKey, timeoutMs)
+            }
+            else -> {
+                runCatching { outputUrl(initial, outputKey) }.getOrElse {
+                    val jobId = initial.optString("id")
+                    if (jobId.isBlank()) throw it
+                    pollForResult(token, endpoint, jobId, outputKey, timeoutMs)
+                }
+            }
         }
     }
 
@@ -118,17 +164,29 @@ class RunpodClient(private val tokenProvider: () -> String?) {
             .header("Content-Type", "application/json")
             .post(payload.toRequestBody("application/json".toMediaType()))
             .build()
+
         val initial = client.newCall(submit).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) throw RunpodApiException(response.code, errorText(body))
             JSONObject(body)
         }
-        val jobId = initial.optString("id")
-        if (jobId.isBlank()) error("RunPod did not return a job ID")
 
+        val jobId = initial.optString("id")
+        if (jobId.isBlank()) {
+            return@withContext outputUrl(initial, outputKey)
+        }
+        pollForResult(token, endpoint, jobId, outputKey, timeoutMs)
+    }
+
+    private suspend fun pollForResult(
+        token: String,
+        endpoint: String,
+        jobId: String,
+        outputKey: String,
+        timeoutMs: Long
+    ): String {
         val started = System.currentTimeMillis()
-        var resultUrl: String? = null
-        while (resultUrl == null) {
+        while (true) {
             if (System.currentTimeMillis() - started > timeoutMs) {
                 error("RunPod generation timed out. Job: $jobId")
             }
@@ -138,80 +196,77 @@ class RunpodClient(private val tokenProvider: () -> String?) {
                 .header("Authorization", "Bearer $token")
                 .get()
                 .build()
+
             val status = client.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 if (!response.isSuccessful) throw RunpodApiException(response.code, errorText(body))
                 JSONObject(body)
             }
-            when (status.optString("status")) {
-                "COMPLETED" -> resultUrl = outputUrl(status, outputKey)
-                "FAILED", "ERROR", "CANCELLED", "TIMED_OUT" -> {
-                    val detail = status.optString("error").ifBlank { status.optString("status") }
-                    error("RunPod $detail\nJob: $jobId")
-                }
+
+            when (status.optString("status").uppercase()) {
+                "COMPLETED" -> return outputUrl(status, outputKey)
+                "FAILED", "ERROR", "CANCELLED", "TIMED_OUT" -> error(statusError(status))
             }
         }
-        resultUrl ?: error("RunPod completed without output. Job: $jobId")
     }
 
     private fun outputUrl(result: JSONObject, preferredKey: String): String {
-        val output = result.opt("output")
-        val candidates = listOf(preferredKey, "result", "url", "video_url", "image_url")
+        val candidates = listOf(preferredKey, "video_url", "image_url", "result", "url")
 
-        fun fromJsonObject(obj: JSONObject): String? {
-            for (key in candidates) {
-                val value = obj.opt(key)
-                if (value is String && (value.startsWith("https://") || value.startsWith("http://"))) return value
-                if (value is JSONObject) {
-                    val nested = fromJsonObject(value)
-                    if (nested != null) return nested
-                }
-                if (value is JSONArray) {
-                    for (i in 0 until value.length()) {
-                        val item = value.opt(i)
-                        if (item is String && (item.startsWith("https://") || item.startsWith("http://"))) return item
-                        if (item is JSONObject) {
-                            val nested = fromJsonObject(item)
-                            if (nested != null) return nested
-                        }
-                    }
-                }
+        fun fromValue(value: Any?): String? = when (value) {
+            is String -> value.takeIf {
+                it.startsWith("https://") || it.startsWith("http://") || it.startsWith("data:")
             }
-            return null
-        }
-
-        val url = when (output) {
-            is JSONObject -> fromJsonObject(output)
-            is JSONArray -> {
+            is JSONObject -> {
                 var found: String? = null
-                for (i in 0 until output.length()) {
-                    val item = output.opt(i)
-                    if (item is String && (item.startsWith("https://") || item.startsWith("http://"))) {
-                        found = item
-                        break
-                    }
-                    if (item is JSONObject) {
-                        found = fromJsonObject(item)
-                        if (found != null) break
+                for (key in candidates) {
+                    found = fromValue(value.opt(key))
+                    if (found != null) break
+                }
+                if (found == null) {
+                    val keys = value.keys()
+                    while (keys.hasNext() && found == null) {
+                        found = fromValue(value.opt(keys.next()))
                     }
                 }
                 found
             }
-            is String -> output.takeIf { it.startsWith("https://") || it.startsWith("http://") }
+            is JSONArray -> {
+                var found: String? = null
+                for (i in 0 until value.length()) {
+                    found = fromValue(value.opt(i))
+                    if (found != null) break
+                }
+                found
+            }
             else -> null
         }
+
+        val url = fromValue(result.opt("output")) ?: fromValue(result)
         if (!url.isNullOrBlank()) return url
 
-        val status = result.optString("status")
-        val error = result.optString("error")
+        val output = result.opt("output")
         val jobId = result.optString("id")
-        val rawOutput = output?.toString()?.take(1500).orEmpty()
-        val detail = buildString {
-            append(if (error.isNotBlank()) "RunPod $status: $error" else "RunPod returned no $preferredKey")
+        val raw = result.toString().take(1800)
+        error(buildString {
+            append("RunPod returned no ").append(preferredKey)
             if (jobId.isNotBlank()) append("\nJob: ").append(jobId)
-            if (rawOutput.isNotBlank()) append("\nOutput: ").append(rawOutput)
+            if (output != null && output != JSONObject.NULL) append("\nOutput: ").append(output.toString().take(1200))
+            append("\nResponse: ").append(raw)
+        })
+    }
+
+    private fun statusError(result: JSONObject): String {
+        val status = result.optString("status")
+        val detail = result.optString("error").ifBlank {
+            val output = result.opt("output")
+            if (output == null || output == JSONObject.NULL) status else output.toString()
         }
-        error(detail)
+        val jobId = result.optString("id")
+        return buildString {
+            append("RunPod ").append(detail)
+            if (jobId.isNotBlank()) append("\nJob: ").append(jobId)
+        }
     }
 
     private fun imageSize(aspectRatio: String): String = when (aspectRatio) {
