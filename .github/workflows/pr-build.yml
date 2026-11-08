@@ -30,4 +30,4 @@ jobs:
           gradle-version: "8.9"
 
       - name: Build APK
-        run: gradle assembleDebug --stacktrace --console=plain
+        run: gradle testDebugUnitTest assembleDebug --stacktrace --console=plain

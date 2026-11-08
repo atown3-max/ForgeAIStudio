@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
@@ -35,6 +36,36 @@ enum class VideoProvider(val label: String) {
 
 @Composable
 fun VideoStudio(
+    client: ReplicateClient,
+    runpodClient: RunpodClient,
+    historyStore: HistoryStore,
+    profileStore: ProfileStore,
+    profileRefreshKey: Int,
+    initialFile: File?,
+    consumeInitialFile: () -> Unit,
+    onHistoryChanged: () -> Unit,
+    openSettings: () -> Unit
+) {
+    val context = LocalContext.current
+    var mode by rememberSaveable { mutableStateOf(if (RecastStore(context).pending() != null) "Recast" else "Animate image") }
+    LaunchedEffect(initialFile) { if (initialFile != null) mode = "Animate image" }
+    Column(Modifier.fillMaxSize()) {
+        Box(Modifier.padding(horizontal = 18.dp, vertical = 10.dp)) {
+            OptionRow("Video mode", listOf("Animate image", "Recast"), mode) { mode = it }
+        }
+        Box(Modifier.weight(1f)) {
+            if (mode == "Recast") {
+                RecastStudio(historyStore, profileStore, profileRefreshKey, onHistoryChanged, openSettings)
+            } else {
+                ImageToVideoStudio(client, runpodClient, historyStore, profileStore, profileRefreshKey,
+                    initialFile, consumeInitialFile, onHistoryChanged, openSettings)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImageToVideoStudio(
     client: ReplicateClient,
     runpodClient: RunpodClient,
     historyStore: HistoryStore,

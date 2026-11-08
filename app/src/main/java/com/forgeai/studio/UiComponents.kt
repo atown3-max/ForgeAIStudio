@@ -35,10 +35,15 @@ fun ResultImage(file: File) {
 
 @Composable
 fun VideoPlayer(file: File, compact: Boolean = false) {
+    VideoPlayer(Uri.fromFile(file), compact)
+}
+
+@Composable
+fun VideoPlayer(uri: Uri, compact: Boolean = false) {
     val context = LocalContext.current
-    val player = remember(file.absolutePath) {
+    val player = remember(uri) {
         ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
+            setMediaItem(MediaItem.fromUri(uri))
             prepare()
             playWhenReady = false
         }

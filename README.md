@@ -1,6 +1,14 @@
-# Forge AI Studio — Android v0.4
+# Forge AI Studio — Android v0.5 Recast preview
 
 Native Android AI image, multi-reference editing, character-consistency, prompt-optimization, and image-to-video studio.
+
+## Recast preview
+
+**Video → Recast** accepts an existing MP4/MOV and an uploaded character image or one selected from the Character Bank. Choose a 2/5/10-second section, 480p/720p area target, and whether to keep original audio. This first version supports one visible person and uses **Wan2.2-Animate-14B replacement mode** on a dedicated GPU worker.
+
+Deploy the included [Recast worker](recast-worker/README.md), then enter its HTTPS address and dedicated token under More → Settings. The ordinary RunPod/Replicate keys do not provision this worker. Recast is a preview: CPU/API tests and Android builds do not prove model quality or GPU compatibility; a live GPU acceptance run is required before normal use.
+
+Accepted renders continue on the worker when you leave the app. Reopen Video → Recast to resume checking and download; the saved job ID prevents duplicate renders after a lost connection. Results go to History and can be shared or saved to the gallery. Worker results are retained for 24 hours while running, so return to download them. Keep the app open until upload is accepted.
 
 ## Main tabs
 
@@ -30,11 +38,13 @@ Forge includes a Prompt Lab and inline Prompt AI buttons powered through the use
 
 ## Video
 
-Every video request automatically begins with:
+Every image-to-video request automatically begins with:
 
 `make this image come alive, cinematic motion, smooth animation`
 
 The user's motion instructions and selected continuity context are appended after that prefix.
+
+Recast uses the source video's motion and its reference image directly. It has its own replacement pipeline and does not use this prompt prefix.
 
 Video routes include:
 
