@@ -120,7 +120,9 @@ class RecastClient(private val tokenProvider: () -> String?) {
         val dir = File(context.filesDir, "creations").apply { mkdirs() }
         val file = File(dir, "recast_${job.id}.mp4")
         if (file.exists() && file.length() > 0) return@withContext file
-        val partial = File(dir, "recast_${job.id}.part")
+        // A previous screen's blocking download can finish after navigation cancels its coroutine.
+        // Separate temporary files prevent a resumed screen from sharing that output stream.
+        val partial = File.createTempFile("recast_${job.id}_", ".part", dir)
         try {
             http.newCall(request(job.endpoint, "/v1/jobs/${job.id}/result").get().build()).execute().use { response ->
                 if (!response.isSuccessful) {
