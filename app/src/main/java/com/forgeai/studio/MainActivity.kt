@@ -32,8 +32,10 @@ fun ForgeApp() {
     val runpodClient = remember { RunpodClient { tokenStore.loadRunPod() } }
 
     val initialScreen = when {
+        RecastStore(context).pending() != null -> Screen.VIDEO
         !tokenStore.load().isNullOrBlank() -> Screen.IMAGE
         !tokenStore.loadRunPod().isNullOrBlank() -> Screen.EDIT
+        !tokenStore.loadRecast().isNullOrBlank() -> Screen.VIDEO
         else -> Screen.MORE
     }
     var screen by remember { mutableStateOf(initialScreen) }
@@ -130,7 +132,11 @@ fun ForgeApp() {
                         onAnimate = { file -> animateFile = file; screen = Screen.VIDEO },
                         onHistoryChanged = { historyVersion++ },
                         onDoneSettings = {
-                            screen = if (!tokenStore.load().isNullOrBlank()) Screen.IMAGE else Screen.EDIT
+                            screen = when {
+                                !tokenStore.load().isNullOrBlank() -> Screen.IMAGE
+                                !tokenStore.loadRunPod().isNullOrBlank() -> Screen.EDIT
+                                else -> Screen.VIDEO
+                            }
                         }
                     )
                 }

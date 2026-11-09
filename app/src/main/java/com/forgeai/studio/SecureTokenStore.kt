@@ -21,6 +21,9 @@ class SecureTokenStore(context: Context) {
     fun loadRunPod(): String? = loadSecret("runpod")
     fun clearRunPod() = clearSecret("runpod")
 
+    fun saveRecast(token: String) = saveSecret("recast", token)
+    fun loadRecast(): String? = loadSecret("recast")
+
     private fun alias(name: String) = "forge_${name}_token_key"
 
     private fun key(name: String): SecretKey {

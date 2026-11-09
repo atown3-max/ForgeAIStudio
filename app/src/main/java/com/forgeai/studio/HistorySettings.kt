@@ -112,11 +112,33 @@ fun SettingsScreen(
     done: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val recastStore = remember { RecastStore(context) }
+    val recastClient = remember { RecastClient(recastStore) { tokenStore.loadRecast() } }
     var token by remember { mutableStateOf(tokenStore.load().orEmpty()) }
     var runpodToken by remember { mutableStateOf(tokenStore.loadRunPod().orEmpty()) }
+    var recastUrl by remember { mutableStateOf(recastStore.endpoint()) }
+    var recastToken by remember { mutableStateOf(tokenStore.loadRecast().orEmpty()) }
+    var serverlessRecast by remember { mutableStateOf(recastUrl.isBlank() || isRunpodRecast(recastUrl)) }
     var show by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var testing by remember { mutableStateOf(false) }
+
+    fun saveSettings(): Boolean = try {
+        val endpoint = if (recastUrl.isBlank()) "" else recastEndpoint(recastUrl)
+        require(endpoint.isBlank() || isRunpodRecast(endpoint) == serverlessRecast) { "Choose the matching Recast connection type." }
+        val active = recastStore.pending()
+        require(active == null || endpoint == active.endpoint) { "A Recast job is saved for ${active?.endpoint}. Finish that job before changing workers." }
+        require((endpoint.isBlank() && recastToken.isBlank()) || (endpoint.isNotBlank() &&
+            recastToken.length >= 32 && recastToken.none { it.isWhitespace() })) {
+            if (serverlessRecast) "Add the endpoint ID and its RunPod API key. Paste the key only, without 'Bearer'."
+            else "Recast needs both an HTTPS worker address and its token (at least 32 characters)."
+        }
+        tokenStore.save(token); tokenStore.saveRunPod(runpodToken)
+        tokenStore.saveRecast(recastToken); recastStore.saveEndpoint(endpoint)
+        recastUrl = endpoint
+        true
+    } catch (error: Exception) { message = error.message; false }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 18.dp),
@@ -146,20 +168,48 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth()
             )
         }
+        item { Text("Recast · Wan Animate", fontWeight = FontWeight.Bold) }
+        item { OptionRow("Connection", listOf("RunPod Serverless", "Forge worker"),
+            if (serverlessRecast) "RunPod Serverless" else "Forge worker") { choice ->
+            val next = choice == "RunPod Serverless"
+            if (next != serverlessRecast) {
+                if (recastStore.pending() != null) message = "Finish or forget the saved Recast job before changing connections."
+                else { serverlessRecast = next; recastUrl = ""; recastToken = "" }
+            }
+        } }
+        item { Text(if (serverlessRecast)
+            "For the Wan Animate RunPod Hub template: enter your endpoint ID or URL, then a RunPod API key with access to that endpoint. Paste only the ID or URL, not a cURL command."
+            else "Enter your Forge worker's HTTPS address and its separate worker token. Do not use a RunPod account key for this connection.",
+            style = MaterialTheme.typography.bodySmall) }
+        item { OutlinedTextField(value = recastUrl, onValueChange = { recastUrl = it.trim() },
+            label = { Text(if (serverlessRecast) "Recast endpoint ID or URL" else "Recast worker HTTPS address") },
+            singleLine = true, modifier = Modifier.fillMaxWidth()) }
+        item { OutlinedTextField(value = recastToken, onValueChange = { recastToken = it.trim() },
+            label = { Text(if (serverlessRecast) "RunPod API key for Recast" else "Recast worker token") },
+            singleLine = true, modifier = Modifier.fillMaxWidth(),
+            visualTransformation = if (show) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation()) }
+        item { OutlinedButton(enabled = !testing && recastUrl.isNotBlank(), onClick = {
+            if (saveSettings()) scope.launch {
+                testing = true
+                try { message = recastClient.health(recastUrl) }
+                catch (error: Exception) { message = "Recast: ${error.message}" }
+                finally { testing = false }
+            }
+        }, modifier = Modifier.fillMaxWidth()) { Text(if (testing) "Testing…" else "Test Recast connection") } }
         item { ToggleRow("Show API keys", show) { show = it } }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(onClick = {
-                    tokenStore.save(token); tokenStore.saveRunPod(runpodToken); message = "API keys saved securely."
+                    if (saveSettings()) message = "API keys saved securely."
                 }, modifier = Modifier.weight(1f)) { Text("Save") }
                 OutlinedButton(
                     onClick = {
-                        tokenStore.save(token); tokenStore.saveRunPod(runpodToken)
-                        scope.launch {
+                        if (saveSettings()) scope.launch {
                             testing = true
                             val results = mutableListOf<String>()
                             if (token.isNotBlank()) results += runCatching { "Replicate: ${client.testToken()}" }.getOrElse { "Replicate: ${it.message}" }
                             if (runpodToken.isNotBlank()) results += runCatching { "RunPod: ${runpodClient.testToken()}" }.getOrElse { "RunPod: ${it.message}" }
+                            if (recastUrl.isNotBlank()) results += runCatching { recastClient.health(recastUrl) }.getOrElse { "Recast: ${it.message}" }
                             message = if (results.isEmpty()) "Add at least one API key first." else results.joinToString("\n")
                             testing = false
                         }
@@ -174,12 +224,13 @@ fun SettingsScreen(
         item {
             Card {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Forge v0.4", fontWeight = FontWeight.Bold)
+                    Text("Forge v0.5.1 · RunPod Recast preview", fontWeight = FontWeight.Bold)
                     Text("Image — Qwen Image 2 with Prompt AI, 1/2/4 outputs, and reusable seeds.")
                     Text("Edit — Qwen Edit 2511 multi-reference (up to 3 images), reference roles, Character/Background Banks, and single-image RunPod Open fallback.")
                     Text("Video — WAN 2.5 Fast, WAN 2.6 Advanced (5/10/15 sec, 720p/1080p), Kling O1 multi-view character references, and LTX 2.3.")
+                    Text("Recast — upload a single-person clip and character image; Wan2.2-Animate-14B replacement with original audio.")
                     Text("Prompt Lab — RunPod Qwen3 32B prompt optimization.")
-                    Text("Every video prompt starts with: \"$VIDEO_PROMPT_PREFIX\"", color = MaterialTheme.colorScheme.primary)
+                    Text("Image-to-video prompts start with: \"$VIDEO_PROMPT_PREFIX\"", color = MaterialTheme.colorScheme.primary)
                 }
             }
         }
@@ -194,8 +245,8 @@ fun SettingsScreen(
         }
         item {
             Button(
-                onClick = { tokenStore.save(token); tokenStore.saveRunPod(runpodToken); done() },
-                enabled = token.isNotBlank() || runpodToken.isNotBlank(),
+                onClick = { if (saveSettings()) done() },
+                enabled = token.isNotBlank() || runpodToken.isNotBlank() || recastUrl.isNotBlank(),
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Open Forge") }
         }

@@ -4,7 +4,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="Forge AI Studio"
+        android:label="${appLabel}"
         android:theme="@style/Theme.ForgeAIStudio"
         android:usesCleartextTraffic="false">
 

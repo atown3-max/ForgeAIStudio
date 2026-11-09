@@ -1,0 +1,10 @@
+# Keep the upstream inference stack compatible with the pinned CUDA base image.
+torch==2.6.0
+torchvision==0.21.0
+torchaudio==2.6.0
+numpy==1.26.4
+diffusers==0.35.1
+transformers==4.51.3
+peft==0.17.1
+flash-attn==2.7.4.post1
+opencv-python==4.11.0.86

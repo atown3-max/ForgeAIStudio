@@ -20,6 +20,9 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
 
       - name: Install Android SDK 35
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
@@ -30,4 +33,4 @@ jobs:
           gradle-version: "8.9"
 
       - name: Build APK
-        run: gradle assembleDebug --stacktrace --console=plain
+        run: gradle testDebugUnitTest assembleDebug --stacktrace --console=plain
