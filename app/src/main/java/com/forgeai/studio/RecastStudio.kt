@@ -31,7 +31,8 @@ fun RecastStudio(historyStore: HistoryStore, profileStore: ProfileStore, profile
     val scope = rememberCoroutineScope()
     val store = remember { RecastStore(context) }
     val secrets = remember { SecureTokenStore(context) }
-    val client = remember { RecastClient { secrets.loadRecast() } }
+    val client = remember { RecastClient(store) { secrets.loadRecast() } }
+    val serverless = isRunpodRecast(store.endpoint())
     val characters = remember(profileRefreshKey) { profileStore.loadCharacters() }
     var videoUri by remember { mutableStateOf<Uri?>(null) }
     var imageUri by remember { mutableStateOf<Uri?>(null) }
@@ -50,6 +51,7 @@ fun RecastStudio(historyStore: HistoryStore, profileStore: ProfileStore, profile
     var status by remember { mutableStateOf<String?>(null) }
     var result by remember { mutableStateOf<File?>(null) }
     var confirmForget by remember { mutableStateOf(false) }
+    var recoveryId by remember { mutableStateOf("") }
 
     if (confirmForget) AlertDialog(onDismissRequest = { confirmForget = false },
         title = { Text("Forget this job?") },
@@ -82,7 +84,7 @@ fun RecastStudio(historyStore: HistoryStore, profileStore: ProfileStore, profile
                             historyStore.add(CreationRecord(id = "recast_${job.id}", kind = CreationKind.VIDEO,
                                 model = "Wan2.2-Animate-14B · Recast", prompt = "Replace the person using the character reference.",
                                 localPath = file.absolutePath, seed = job.seed,
-                                settings = "start=${job.start}s; duration=${job.duration}s; resolution=${job.resolution}; fps=30; originalAudio=${job.keepAudio}",
+                                settings = "start=${job.start}s; duration=${job.duration}s; resolution=${job.resolution}; fps=${if (isRunpodRecast(job.endpoint)) 16 else 30}; originalAudio=${job.keepAudio}; provider=${if (isRunpodRecast(job.endpoint)) "RunPod Hub" else "Forge worker"}",
                                 referenceSummary = job.reference))
                         }
                         store.clear(job); pending = null; result = file
@@ -90,7 +92,9 @@ fun RecastStudio(historyStore: HistoryStore, profileStore: ProfileStore, profile
                         break
                     }
                     "FAILED" -> { terminal = true; status = remote.optString("error", "Recast failed."); break }
-                    "QUEUED", "RUNNING" -> status = "${remote.optString("stage")} · You can leave this screen and return later."
+                    "QUEUED", "RUNNING" -> status = "${remote.optString("stage")} · " +
+                        if (serverless) "Keep Forge open to save the result automatically. RunPod results expire 30 minutes after completion."
+                        else "You can leave this screen and return later."
                     else -> error("Unknown worker status. Your job is saved; retry checking it.")
                 }
                 delay(4000)
@@ -98,7 +102,8 @@ fun RecastStudio(historyStore: HistoryStore, profileStore: ProfileStore, profile
             }
         } catch (error: CancellationException) { throw error
         } catch (error: Exception) {
-            terminal = error is RecastApiException && error.status in listOf(410, 413, 422)
+            terminal = error is RecastApiException && (error.status in listOf(410, 413, 422) ||
+                (serverless && error.status == 404 && store.submission(job.id)?.isNotEmpty() == true))
             paused = !terminal
             status = "${error.message ?: "Connection interrupted."}${if (!terminal) " Your job is saved on this phone." else ""}"
         } finally { busy = false }
@@ -154,7 +159,8 @@ fun RecastStudio(historyStore: HistoryStore, profileStore: ProfileStore, profile
                     }
                 }
             } } }
-            item { OptionRow("Quality", listOf("480p", "720p"), resolution) { if (!busy) resolution = it } }
+            if (serverless) item { Text("RunPod preview · 480p maximum · 16 FPS. Forge trims and compresses the selected section on this phone before uploading.") }
+            else item { OptionRow("Quality", listOf("480p", "720p"), resolution) { if (!busy) resolution = it } }
             item { ToggleRow("Keep original audio", keepAudio) { if (!busy) keepAudio = it } }
             item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Checkbox(checked = acknowledged, onCheckedChange = { if (!busy) acknowledged = it })
@@ -209,7 +215,11 @@ fun RecastStudio(historyStore: HistoryStore, profileStore: ProfileStore, profile
                         }
                         val job = RecastJob(id, endpoint, File(jobFolder, "source.video").absolutePath,
                             File(jobFolder, "reference.jpg").absolutePath, referenceName, offset, duration,
-                            resolution, SeedTools.randomSeed(), keepAudio)
+                            if (serverless) "480p" else resolution, SeedTools.randomSeed(), keepAudio)
+                        if (serverless) {
+                            status = "Preparing the selected section for RunPod… Keep Forge open."
+                            prepareRunpodRecast(context, job)
+                        }
                         store.save(job); folder = null; pending = job
                     } catch (error: CancellationException) { throw error
                     } catch (error: Exception) { status = error.message
@@ -220,7 +230,20 @@ fun RecastStudio(historyStore: HistoryStore, profileStore: ProfileStore, profile
         status?.let { item { StatusCard(it, busy, openSettings) } }
         if (pending != null && paused) item {
             Column {
-                OutlinedButton(onClick = { retry++ }, enabled = !busy) { Text("Reconnect / retry upload") }
+                if (serverless && store.submission(pending!!.id) == "") {
+                    Text("Submission was interrupted. Check this endpoint's Requests tab in RunPod. Paste its job ID to recover without starting another render.")
+                    OutlinedTextField(value = recoveryId, onValueChange = { recoveryId = it.trim() },
+                        label = { Text("Existing RunPod job ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedButton(enabled = !busy && recoveryId.isNotBlank(), onClick = {
+                        val job = pending ?: return@OutlinedButton
+                        scope.launch {
+                            busy = true
+                            try { client.recover(job, recoveryId); retry++ }
+                            catch (error: Exception) { status = error.message }
+                            finally { busy = false }
+                        }
+                    }) { Text("Recover existing job") }
+                } else OutlinedButton(onClick = { retry++ }, enabled = !busy) { Text("Reconnect / retry upload") }
                 TextButton(onClick = { confirmForget = true }, enabled = !busy) { Text("Forget saved job…") }
             }
         }

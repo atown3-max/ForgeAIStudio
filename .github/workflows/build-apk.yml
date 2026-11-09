@@ -46,3 +46,12 @@ jobs:
         with:
           name: ForgeAIStudio-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Build separately installable Recast preview
+        run: gradle assembleDebug -PrecastPreview=true --stacktrace --console=plain
+
+      - name: Upload Recast preview APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ForgeRecast-preview-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
